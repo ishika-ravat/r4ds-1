@@ -2,4 +2,167 @@
 title: "Analyzing Music Data"
 author: "Ishika Ravat"
 format: html
+execute:
+  echo: false
 ---
+
+```{r}
+#| message: false
+library(tidyverse)
+
+billboard |> 
+  select(artist, track, date.entered, wk1:wk4)
+```
+
+```{r}
+ggplot(billboard, aes(x = wk6)) +
+  geom_histogram(binwidth = 5, fill = "steelblue", color = "white") +
+  labs(
+    title = "Distribution of Week 6 Rankings",
+    subtitle = paste0("Number of values: ", sum(!is.na(billboard$wk6))),
+    x = "Week 6 Rank",
+    y = "Count"
+  )
+```
+
+```{r}
+billboard |> 
+  select(wk1, wk4, wk10, wk20, wk40, wk76) |> 
+  pivot_longer(
+    cols = everything(), 
+    names_to = "week", 
+    values_to = "rank"
+  ) |> 
+  mutate(week = factor(week, levels = c("wk1", "wk4", "wk10", "wk20", "wk40", "wk76"))) |> 
+  group_by(week) |> 
+  summarise(
+    present = sum(!is.na(rank)),
+    missing = sum(is.na(rank))
+  )
+```
+
+```{r}
+billboard |> 
+  pivot_longer(
+    cols = starts_with("wk"), 
+    names_to = "week", 
+    names_prefix = "wk", 
+    values_to = "rank", 
+    values_drop_na = FALSE
+  ) |> 
+  mutate(week = as.integer(week)) |> 
+  group_by(artist, track) |> 
+  summarise(
+    re_entered = any(is.na(rank) & week < max(week[!is.na(rank)])), 
+    .groups = "drop"
+  ) |> 
+  count(re_entered)
+```
+
+```{r}
+billboard_long <- billboard |> 
+  pivot_longer(
+    cols = starts_with("wk"), 
+    names_to = "week", 
+    names_prefix = "wk", 
+    values_to = "rank", 
+    values_drop_na = TRUE
+  ) |> 
+  mutate(week = as.integer(week))
+
+ggplot(billboard_long, aes(x = week, y = rank, group = interaction(artist, track))) +
+  geom_line(alpha = 0.2, color = "steelblue") +
+  scale_y_reverse() +
+  labs(
+    title = "Song Rankings Over Time",
+    x = "Week",
+    y = "Rank (Reversed)"
+  )
+```
+
+```{r}
+# Create song-level summary
+song_summary <- billboard_long |> 
+  group_by(artist, track) |> 
+  summarise(
+    first_rank = rank[week == min(week)],
+    best_rank = min(rank),
+    first_week_at_best = min(week[rank == best_rank]),
+    total_weeks = n(),
+    .groups = "drop"
+  )
+
+# Display a preview of the song summary
+head(song_summary, 10)
+
+# Identify three notable songs
+fastest_no1 <- song_summary |> 
+  filter(best_rank == 1) |> 
+  slice_min(first_week_at_best, n = 1) |> 
+  mutate(category = "Fastest to reach #1")
+
+slowest_no1 <- song_summary |> 
+  filter(best_rank == 1) |> 
+  slice_max(first_week_at_best, n = 1) |> 
+  mutate(category = "Slowest to reach #1")
+
+longest_top10 <- song_summary |> 
+  filter(best_rank <= 10) |> 
+  slice_max(total_weeks, n = 1) |> 
+  mutate(category = "Top-10 with longest run")
+
+# Combine and print the results
+bind_rows(fastest_no1, slowest_no1, longest_top10) |> 
+  select(category, artist, track, first_rank, best_rank, first_week_at_best, total_weeks)
+```
+
+```{r}
+#| cache: true
+# Filter for songs that reached the top 10
+top10_songs <- billboard_long |> 
+  group_by(artist, track) |> 
+  filter(min(rank) <= 10) |> 
+  ungroup() |> 
+  mutate(
+    highlight = case_when(
+      artist == "Madonna" & track == "Music" ~ "Madonna - Music (Fastest to #1)",
+      artist == "Lonestar" & track == "Amazed" ~ "Lonestar - Amazed (Slowest to #1)",
+      artist == "Creed" & track == "Higher" ~ "Creed - Higher (Longest run)",
+      TRUE ~ "Other Top 10"
+    )
+  )
+
+# Plot top-10 songs, highlighting the three notable ones
+ggplot() +
+  geom_line(
+    data = filter(top10_songs, highlight == "Other Top 10"),
+    aes(x = week, y = rank, group = interaction(artist, track), color = highlight),
+    alpha = 0.4, linewidth = 0.5
+  ) +
+  geom_line(
+    data = filter(top10_songs, highlight != "Other Top 10"),
+    aes(x = week, y = rank, group = interaction(artist, track), color = highlight),
+    alpha = 1, linewidth = 1.2
+  ) +
+  scale_y_reverse() +
+  scale_color_manual(
+    name = "Notable Songs",
+    values = c(
+      "Madonna - Music (Fastest to #1)" = "#E41A1C",
+      "Lonestar - Amazed (Slowest to #1)" = "#377EB8",
+      "Creed - Higher (Longest run)" = "#4DAF4C",
+      "Other Top 10" = "gray85"
+    ),
+    breaks = c(
+      "Madonna - Music (Fastest to #1)",
+      "Lonestar - Amazed (Slowest to #1)",
+      "Creed - Higher (Longest run)"
+    )
+  ) +
+  labs(
+    title = "Top 10 Songs: Highlighted Notable Runs",
+    x = "Week",
+    y = "Rank (Reversed)"
+  ) +
+  theme_minimal()
+```
